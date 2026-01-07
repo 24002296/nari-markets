@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Admin Dashboard - NARI MARKETS</title>
+<link rel="stylesheet" href="admin.css"/>
+</head>
+
+<body>
+
+<header>
+    <h1>NARI Admin Dashboard</h1>
+    <button id="logoutBtn">Logout</button>
+</header>
+
+<main>
+<div class="left-column">
+
+    <!-- PENDING USERS -->
+    <section>
+        <h2>Pending User Approvals</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Email</th>
+                    <th>Approve</th>
+                    <th>Reject</th>
+                </tr>
+            </thead>
+            <tbody id="pendingUsersBody"></tbody>
+        </table>
+    </section>
+
+    <!-- ACTIVE USERS -->
+    <section>
+        <h2>Active Users</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Email</th>
+                    <th>Subscription Expiry</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody id="activeUsersBody"></tbody>
+        </table>
+    </section>
+
+</div>
+
+<div class="right-column">
+
+    <!-- ADD / EDIT SIGNAL -->
+    <section>
+        <h2>Add / Edit Signal</h2>
+
+        <form id="signalForm">
+            <input id="pair" placeholder="Pair (e.g. EURUSD)" required />
+            <input id="entry" type="number" step="0.00001" placeholder="Entry" required />
+            <input id="tp" type="number" step="0.00001" placeholder="Take Profit" required />
+            <input id="sl" type="number" step="0.00001" placeholder="Stop Loss" required />
+
+            <h4>Lot Sizes (optional – max 3)</h4>
+            <div id="lotRows"></div>
+            <button type="button" onclick="addLot()">+ Add Lot</button>
+
+            <br><br>
+            <button type="submit">Save Signal</button>
+        </form>
+    </section>
+
+    <!-- SIGNAL LIST -->
+    <section>
+        <h2>Existing Signals</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Pair</th>
+                    <th>Entry</th>
+                    <th>TP</th>
+                    <th>SL</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody id="signalTableBody"></tbody>
+        </table>
+    </section>
+
+</div>
+</main>
+
+<script>
+/* ===============================
+   CONFIG
+================================ */
+const API_BASE = "https://nari-15.onrender.com/api";
+const token = localStorage.getItem("token");
+
+if (!token) {
+    alert("Not logged in");
+    window.location.href = "index.html";
+}
+
+function authHeaders() {
+    return {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + token
+    };
+}
+
+/* ===============================
+   USERS
+================================ */
+async function loadPendingUsers() {
+    const tbody = document.getElementById("pendingUsersBody");
+    tbody.innerHTML = "<tr><td colspan='4'>Loading...</td></tr>";
+
+    const res = await fetch(`${API_BASE}/admin/users/pending`, {
+        headers: authHeaders()
+    });
+
+    const users = await res.json();
+    tbody.innerHTML = "";
+
+    if (users.length === 0) {
+        tbody.innerHTML = "<tr><td colspan='4'>No pending users</td></tr>";
+        return;
+    }
+
+    users.forEach(u => {
+        tbody.innerHTML += `
+            <tr>
+                <td>${u.name} ${u.surname || ""}</td>
+                <td>${u.email}</td>
+                <td><button onclick="approveUser(${u.id})">Approve</button></td>
+                <td><button onclick="rejectUser(${u.id})">Reject</button></td>
+            </tr>
+        `;
+    });
+}
+
+async function loadActiveUsers() {
+    const tbody = document.getElementById("activeUsersBody");
+    tbody.innerHTML = "<tr><td colspan='4'>Loading...</td></tr>";
+
+    const res = await fetch(`${API_BASE}/admin/users/active`, {
+        headers: authHeaders()
+    });
+
+    const users = await res.json();
+    tbody.innerHTML = "";
+
+    if (users.length === 0) {
+        tbody.innerHTML = "<tr><td colspan='4'>No active users</td></tr>";
+        return;
+    }
+
+    users.forEach(u => {
+        tbody.innerHTML += `
+            <tr>
+                <td>${u.name}</td>
+                <td>${u.email}</td>
+                <td>${u.subscription_end || "-"}</td>
+                <td><button onclick="deactivateUser(${u.id})">Deactivate</button></td>
+            </tr>
+        `;
+    });
+}
+
+async function approveUser(id) {
+    await fetch(`${API_BASE}/admin/users/${id}/approve`, {
+        method: "PUT",
+        headers: authHeaders()
+    });
+    loadPendingUsers();
+    loadActiveUsers();
+}
+
+async function rejectUser(id) {
+    await fetch(`${API_BASE}/admin/users/${id}/reject`, {
+        method: "DELETE",
+        headers: authHeaders()
+    });
+    loadPendingUsers();
+}
+
+/* ===============================
+   SIGNALS
+================================ */
+let editingSignalId = null;
+
+async function loadSignals() {
+    const tbody = document.getElementById("signalTableBody");
+    tbody.innerHTML = "<tr><td colspan='5'>Loading...</td></tr>";
+
+    const res = await fetch(`${API_BASE}/admin/signals`, {
+        headers: authHeaders()
+    });
+
+    const signals = await res.json();
+    tbody.innerHTML = "";
+
+    if (signals.length === 0) {
+        tbody.innerHTML = "<tr><td colspan='5'>No signals</td></tr>";
+        return;
+    }
+
+    signals.forEach(s => {
+        tbody.innerHTML += `
+            <tr>
+                <td>${s.pair}</td>
+                <td>${s.entry}</td>
+                <td>${s.tp}</td>
+                <td>${s.sl}</td>
+                <td>
+                    <button onclick="editSignal(${s.id}, '${s.pair}', '${s.entry}', '${s.tp}', '${s.sl}')">Edit</button>
+                    <button onclick="deleteSignal(${s.id})">Delete</button>
+                </td>
+            </tr>
+        `;
+    });
+}
+
+async function deleteSignal(id) {
+    if (!confirm("Delete signal?")) return;
+
+    await fetch(`${API_BASE}/admin/signals/${id}`, {
+        method: "DELETE",
+        headers: authHeaders()
+    });
+
+    loadSignals();
+}
+
+function editSignal(id, pair, entry, tp, sl) {
+    editingSignalId = id;
+    pair.value = pair;
+    entry.value = entry;
+    tp.value = tp;
+    sl.value = sl;
+}
+
+/* ===============================
+   LOT SIZES
+================================ */
+function addLot() {
+    const container = document.getElementById("lotRows");
+    if (container.children.length >= 3) {
+        alert("Max 3 lot sizes");
+        return;
+    }
+
+    const row = document.createElement("div");
+    row.className = "lot-row";
+    row.innerHTML = `
+        <input class="lot-size" type="number" step="0.01" placeholder="Lot size">
+        <input class="win-amount" type="number" step="0.01" placeholder="Win (R)">
+        <input class="loss-amount" type="number" step="0.01" placeholder="Loss (R)">
+        <button type="button" onclick="this.parentElement.remove()">✕</button>
+    `;
+    container.appendChild(row);
+}
+
+function collectLots() {
+    return [...document.querySelectorAll(".lot-row")].map(row => ({
+        lot_size: row.querySelector(".lot-size").value,
+        win_amount: row.querySelector(".win-amount").value,
+        loss_amount: row.querySelector(".loss-amount").value
+    }));
+}
+
+/* ===============================
+   INIT
+================================ */
+document.addEventListener("DOMContentLoaded", () => {
+
+    document.getElementById("logoutBtn").onclick = () => {
+        localStorage.clear();
+        window.location.href = "index.html";
+    };
+
+    document.getElementById("signalForm").onsubmit = async e => {
+        e.preventDefault();
+
+        const payload = {
+            pair: pair.value,
+            entry: entry.value,
+            tp: tp.value,
+            sl: sl.value,
+            lots: collectLots()
+        };
+
+        const url = editingSignalId
+            ? `${API_BASE}/admin/signals/${editingSignalId}`
+            : `${API_BASE}/admin/signals`;
+
+        const method = editingSignalId ? "PUT" : "POST";
+
+        await fetch(url, {
+            method,
+            headers: authHeaders(),
+            body: JSON.stringify(payload)
+        });
+
+        editingSignalId = null;
+        e.target.reset();
+        document.getElementById("lotRows").innerHTML = "";
+        loadSignals();
+    };
+
+    loadPendingUsers();
+    loadActiveUsers();
+    loadSignals();
+});
+</script>
+
+</body>
+</html>
+
