@@ -96,11 +96,29 @@
 /* ===============================
    CONFIG
 ================================ */
+
 const API_BASE = "https://nari-15.onrender.com/api";
 const token = localStorage.getItem("token");
 
 if (!token) {
     alert("Not logged in");
+    window.location.href = "index.html";
+}
+
+/* 🔐 ADMIN TOKEN CHECK */
+function parseJwt(token) {
+    try {
+        return JSON.parse(atob(token.split(".")[1]));
+    } catch {
+        return null;
+    }
+}
+
+const decoded = parseJwt(token);
+
+if (!decoded || decoded.role !== "admin") {
+    alert("Admin access only");
+    localStorage.clear();
     window.location.href = "index.html";
 }
 
@@ -110,6 +128,7 @@ function authHeaders() {
         "Authorization": "Bearer " + token
     };
 }
+
 
 /* ===============================
    USERS
@@ -122,10 +141,16 @@ async function loadPendingUsers() {
         headers: authHeaders()
     });
 
+    if (!res.ok) {
+        const err = await res.json();
+        tbody.innerHTML = `<tr><td colspan="4">${err.message || "Unauthorized"}</td></tr>`;
+        return;
+    }
+
     const users = await res.json();
     tbody.innerHTML = "";
 
-    if (users.length === 0) {
+    if (!Array.isArray(users) || users.length === 0) {
         tbody.innerHTML = "<tr><td colspan='4'>No pending users</td></tr>";
         return;
     }
@@ -142,6 +167,7 @@ async function loadPendingUsers() {
     });
 }
 
+
 async function loadActiveUsers() {
     const tbody = document.getElementById("activeUsersBody");
     tbody.innerHTML = "<tr><td colspan='4'>Loading...</td></tr>";
@@ -150,10 +176,16 @@ async function loadActiveUsers() {
         headers: authHeaders()
     });
 
+    if (!res.ok) {
+        const err = await res.json();
+        tbody.innerHTML = `<tr><td colspan="4">${err.message || "Unauthorized"}</td></tr>`;
+        return;
+    }
+
     const users = await res.json();
     tbody.innerHTML = "";
 
-    if (users.length === 0) {
+    if (!Array.isArray(users) || users.length === 0) {
         tbody.innerHTML = "<tr><td colspan='4'>No active users</td></tr>";
         return;
     }
@@ -163,8 +195,14 @@ async function loadActiveUsers() {
             <tr>
                 <td>${u.name}</td>
                 <td>${u.email}</td>
-                <td>${u.subscription_end || "-"}</td>
-                <td><button onclick="deactivateUser(${u.id})">Deactivate</button></td>
+                <td>${u.expiry || "-"}</td>
+                <td>
+                    ${
+                        u.is_active
+                        ? `<button onclick="deactivateUser(${u.id})">Deactivate</button>`
+                        : `<button onclick="reactivateUser(${u.id})">Reactivate</button>`
+                    }
+                </td>
             </tr>
         `;
     });
@@ -194,16 +232,29 @@ let editingSignalId = null;
 
 async function loadSignals() {
     const tbody = document.getElementById("signalTableBody");
+
+    if (!tbody) {
+        console.error("signalTableBody not found");
+        return;
+    }
+
     tbody.innerHTML = "<tr><td colspan='5'>Loading...</td></tr>";
 
     const res = await fetch(`${API_BASE}/admin/signals`, {
         headers: authHeaders()
     });
 
+    if (!res.ok) {
+        tbody.innerHTML = "<tr><td colspan='5'>Failed to load signals</td></tr>";
+        return;
+    }
+
     const signals = await res.json();
+    console.log("Signals from API:", signals);
+
     tbody.innerHTML = "";
 
-    if (signals.length === 0) {
+    if (!Array.isArray(signals) || signals.length === 0) {
         tbody.innerHTML = "<tr><td colspan='5'>No signals</td></tr>";
         return;
     }
@@ -224,6 +275,7 @@ async function loadSignals() {
     });
 }
 
+
 async function deleteSignal(id) {
     if (!confirm("Delete signal?")) return;
 
@@ -234,14 +286,35 @@ async function deleteSignal(id) {
 
     loadSignals();
 }
+async function deactivateUser(id) {
+    if (!confirm("Deactivate this user?")) return;
+
+    await fetch(`${API_BASE}/admin/users/${id}/deactivate`, {
+        method: "PUT",
+        headers: authHeaders()
+    });
+
+    loadActiveUsers();
+}
+
+async function reactivateUser(id) {
+    await fetch(`${API_BASE}/admin/users/${id}/reactivate`, {
+        method: "PUT",
+        headers: authHeaders()
+    });
+
+    loadActiveUsers();
+}
 
 function editSignal(id, pair, entry, tp, sl) {
     editingSignalId = id;
-    pair.value = pair;
-    entry.value = entry;
-    tp.value = tp;
-    sl.value = sl;
+
+    document.getElementById("pair").value = pair;
+    document.getElementById("entry").value = entry;
+    document.getElementById("tp").value = tp;
+    document.getElementById("sl").value = sl;
 }
+
 
 /* ===============================
    LOT SIZES
@@ -282,34 +355,41 @@ document.addEventListener("DOMContentLoaded", () => {
         window.location.href = "index.html";
     };
 
-    document.getElementById("signalForm").onsubmit = async e => {
-        e.preventDefault();
+document.getElementById("signalForm").onsubmit = async e => {
+    e.preventDefault();
 
-        const payload = {
-            pair: pair.value,
-            entry: entry.value,
-            tp: tp.value,
-            sl: sl.value,
-            lots: collectLots()
-        };
-
-        const url = editingSignalId
-            ? `${API_BASE}/admin/signals/${editingSignalId}`
-            : `${API_BASE}/admin/signals`;
-
-        const method = editingSignalId ? "PUT" : "POST";
-
-        await fetch(url, {
-            method,
-            headers: authHeaders(),
-            body: JSON.stringify(payload)
-        });
-
-        editingSignalId = null;
-        e.target.reset();
-        document.getElementById("lotRows").innerHTML = "";
-        loadSignals();
+    const payload = {
+        pair: document.getElementById("pair").value,
+        entry: document.getElementById("entry").value,
+        tp: document.getElementById("tp").value,
+        sl: document.getElementById("sl").value,
+       
+        lots: collectLots()
     };
+
+    const url = editingSignalId
+        ? `${API_BASE}/admin/signals/${editingSignalId}`
+        : `${API_BASE}/admin/signals`;
+
+    const method = editingSignalId ? "PUT" : "POST";
+
+    const res = await fetch(url, {
+        method,
+        headers: authHeaders(),
+        body: JSON.stringify(payload)
+    });
+
+    if (!res.ok) {
+        const err = await res.json();
+        alert(err.message || "Failed to save signal");
+        return;
+    }
+
+    editingSignalId = null;
+    e.target.reset();
+    document.getElementById("lotRows").innerHTML = "";
+    loadSignals();
+};
 
     loadPendingUsers();
     loadActiveUsers();
@@ -319,4 +399,5 @@ document.addEventListener("DOMContentLoaded", () => {
 
 </body>
 </html>
+
 
